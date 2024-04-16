@@ -10,7 +10,7 @@
 #include <arpa/inet.h>  
 #include <pthread.h>
 
-
+void process_client(struct sockaddr_in* client_addr, int connection, char* buffer);
 // Max message to echo
 #define MAX_MESSAGE	1000
 
@@ -94,8 +94,6 @@ int main(int argc, char** argv) {
 	// go into forever loop and echo whatever message is received
 	// to console and back to source
 	char* buffer = calloc(MAX_MESSAGE,sizeof(char));
-	int bytes_read;
-	int echoed;
 	int connection;
 	
     while (1) {			
@@ -108,15 +106,26 @@ int main(int argc, char** argv) {
 			perror("Error calling accept");
 			exit(-1);
 		}		
-
 		// Create child process
 		pid = fork();
-
 		if(pid < 0)
 		{
 			perror("ERROR on fork");
 		} else if(!pid){
+			process_client(&client_addr, connection, buffer);
 			close(sock);
+		} else {
+			close(connection);
+		}
+    }	// end of outer loop
+	free(buffer);
+	// will never get here
+	return(0);
+}
+
+
+void process_client(struct sockaddr_in* client_addr, int connection, char* buffer)
+{
 			// ready to r/w - another loop - it will be broken when
 			// the connection is closed
 			while(1)
@@ -125,7 +134,7 @@ int main(int argc, char** argv) {
 									// disconnect
 
 				// read message								
-				bytes_read = read(connection,buffer,MAX_MESSAGE-1);
+				ssize_t bytes_read = read(connection,buffer,MAX_MESSAGE-1);
 							
 				if (bytes_read == 0)
 				{	// socket closed
@@ -146,10 +155,11 @@ int main(int argc, char** argv) {
 				}
 				
 				// Print received message and client IP
-				printf("Received message from: %s\nPort: %i\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+				printf("Received message from: %s\nPort: %i\n", inet_ntoa(client_addr->sin_addr), ntohs(client_addr->sin_port));
 				printf("Message: %s\n", buffer);
 
 				// send it back to client
+				ssize_t echoed;
 				if ((echoed = write(connection, buffer, bytes_read + 1)) < 0 )
 				{
 					perror("Error sending echo");
@@ -157,15 +167,8 @@ int main(int argc, char** argv) {
 				}
 				else
 				{			
-					printf("Bytes echoed: %d\n",echoed);
+					printf("Bytes echoed: %ld\n",echoed);
 				}
 					
 			}  // end of accept inner-while
-		} else {
-			close(connection);
-		}
-    }	// end of outer loop
-	free(buffer);
-	// will never get here
-	return(0);
 }
