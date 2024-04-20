@@ -4,15 +4,22 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <pthread.h>
+#include <fcntl.h>
 
-void process_client(struct sockaddr_in *client_addr, int connection, char *buffer);
+static void process_client(struct sockaddr_in *client_addr, int connection);
+static void build_response(char* url, char* file_ext, char* response, int* response_len);
+static void get_file_url(char* uri, char* url, char* file_ext);
+
 // Max message to echo
-#define MAX_MESSAGE 1000
+#define MAX_MESSAGE 100000
+#define MAX_EXT	10
 
 /* server main routine */
 
@@ -20,7 +27,7 @@ int main(int argc, char **argv)
 {
 
 	// locals
-	unsigned short port = 3300; // default port
+	unsigned short port = 80; // default port
 	int sock;					// socket descriptor
 	pid_t pid;
 
@@ -94,9 +101,8 @@ int main(int argc, char **argv)
 
 	// go into forever loop and echo whatever message is received
 	// to console and back to source
-	char *buffer = calloc(MAX_MESSAGE, sizeof(char));
+	// Create a child process for each connection
 	int connection;
-
 	while (1)
 	{
 		socklen_t client_addr_len = sizeof(client_addr);
@@ -113,10 +119,14 @@ int main(int argc, char **argv)
 		if (pid < 0)
 		{
 			perror("ERROR on fork");
+			close(sock);
+			close(connection);
+			exit(-1);
 		}
 		else if (!pid)
 		{
-			process_client(&client_addr, connection, buffer);
+			process_client(&client_addr, connection);
+			printf("Done processing clinet\n");
 			close(sock);
 		}
 		else
@@ -124,55 +134,152 @@ int main(int argc, char **argv)
 			close(connection);
 		}
 	} // end of outer loop
-	free(buffer);
+
 	// will never get here
 	return (0);
 }
 
-void process_client(struct sockaddr_in *client_addr, int connection, char *buffer)
+static void process_client(struct sockaddr_in *client_addr, int connection)
 {
-	// ready to r/w - another loop - it will be broken when
-	// the connection is closed
-	while (1)
+	// Read client GET request by storing into buffer from read
+	char *buffer = calloc(MAX_MESSAGE, sizeof(char));
+	int bytes_read = read(connection, buffer, MAX_MESSAGE - 1);	
+	/* Determine if read was successful */
+	if (bytes_read == 0)
+	{ // socket closed
+		printf("====Client Disconnected====\n");
+		close(connection);
+		free(buffer);
+		return;
+	}
+
+	// see if client wants us to disconnect
+	if (strncmp(buffer, "quit", 4) == 0)
 	{
-		buffer[0] = '\0'; // guarantee a null here to break out on a
-						  // disconnect
+		printf("====Server Disconnecting====\n");
+		close(connection);
+		free(buffer);
+		return;
+	}
 
-		// read message
-		ssize_t bytes_read = read(connection, buffer, MAX_MESSAGE - 1);
+	/* Some local vars */
+	char verb[MAX_MESSAGE], uri[MAX_MESSAGE], version[MAX_MESSAGE], url[MAX_MESSAGE], file_ext[MAX_EXT];
 
-		if (bytes_read == 0)
-		{ // socket closed
-			printf("====Client Disconnected====\n");
-			close(connection);
-			break; // break the inner while loop
-		}
+	/* Parse through request with sscanf and putting into above fields */
+	sscanf(buffer, "%s %s %s", verb, uri, version);
 
-		// make sure buffer has null temrinator
-		buffer[bytes_read] = '\0';
+	/* Get the file url */
+	get_file_url(uri, url, file_ext);
+	
+	char* response = (char*)calloc(MAX_MESSAGE, sizeof(char));
+	int* response_len = NULL;
 
-		// see if client wants us to disconnect
-		if (strncmp(buffer, "quit", 4) == 0)
-		{
-			printf("====Server Disconnecting====\n");
-			close(connection);
-			break; // break the inner while loop
-		}
+	/* Create server response */
+	build_response(url, file_ext, response, response_len);
+	free(buffer);
+} // end of accept inner-while
 
-		// Print received message and client IP
-		printf("Received message from: %s\nPort: %i\n", inet_ntoa(client_addr->sin_addr), ntohs(client_addr->sin_port));
-		printf("Message: %s\n", buffer);
+/**
+ * Builds the server response field for HTTP 1.1
+*/
+static void build_response(char* url, char* file_ext, char* response, int* response_len)
+{
+	char* http_header = (char*)calloc(MAX_MESSAGE, sizeof(char));
+	snprintf(http_header, MAX_MESSAGE,
+	 "HTTP/1.1 200 OK\r\n"
+	 "Content-Type: %s\r\n"
+	 "\r\n",
+	 file_ext);
 
-		// send it back to client
-		ssize_t echoed;
-		if ((echoed = write(connection, buffer, bytes_read + 1)) < 0)
-		{
-			perror("Error sending echo");
-			exit(-1);
-		}
-		else
-		{
-			printf("Bytes echoed: %ld\n", echoed);
-		}
-	} // end of accept inner-while
+	/* Open file Stream in READ-ONLY*/
+//	 FILE* file = fopen(url, "r");
+	int fd = open(url, O_RDONLY);
+
+	 /* File Failed to open... 404 error*/
+	 if(fd < 0)
+	 {
+		snprintf(response, MAX_MESSAGE,
+		"HTTP/1.1 404 Not Found\r\n"
+		"Content-Type: text/plain\r\n"
+		"\r\n"
+		"404 Not Found");
+
+		*response_len = strlen(response);
+		return;
+	 }
+
+	 /* Get file size with fstat */
+	 struct stat file_info;
+	 fstat(fd, &file_info);
+	
+	 // Get file size
+	 off_t file_size = file_info.st_size;
+
+	// Set response and response_len
+	memcpy(response, http_header, strlen(http_header));
+	*response_len = strlen(http_header);
+
+	// Put file into buffer
+	ssize_t bytes_read;
+	while((bytes_read = read(fd, response + *response_len, MAX_MESSAGE-*response_len)) > 0)
+	{
+		*response_len += bytes_read;
+	}
+	free(http_header);
+	close(fd);
+}
+
+
+/**]
+ * Sets URL and file_exntesion
+ * Formats URL by removing all special cases (algorithm borrowed)
+ * Removes URL parameters by looking for last ? and replacing with null terminator
+ * Creates local "httpdocs" directory for URL contents
+*/
+static void get_file_url(char* uri, char* url, char* file_ext)
+{
+	/* Local Vars */
+	const char* DEFAULT_EXT = ".html";
+
+	/* Locate URL parameters, and remove */
+	char* url_parameters = strrchr(uri, '?');
+	if(url_parameters)
+	{
+		*url_parameters = '\0';
+	}
+    
+	/* Add directory for file at beginning of url and copy uri into url */
+	// strcpy(url, "httpdocs");
+	// strcat(url, uri);
+
+	/* Set file exntension var */
+	file_ext = strrchr(url, '.');
+
+	/* Default to .html if no extension provided */
+	if(!file_ext || file_ext == url)
+	{
+		strcpy(file_ext, DEFAULT_EXT);
+		strcat(url, file_ext);
+	}
+
+	/**
+	 * The following encoding algorithm taken from 
+	 * URL https://gist.github.com/jesobreira/4ba48d1699b7527a4a514bfa1d70f61a
+	*/
+    const char *hex = "0123456789abcdef";
+
+    int pos = 0;
+    for (int i = 0; i < strlen(uri); i++) {
+        if (('a' <= uri[i] && uri[i] <= 'z')
+            || ('A' <= uri[i] && uri[i] <= 'Z')
+            || ('0' <= uri[i] && uri[i] <= '9')) {
+                url[pos++] = uri[i];
+            } else {
+                url[pos++] = '%';
+                url[pos++] = hex[uri[i] >> 4];
+                url[pos++] = hex[uri[i] & 15];
+            }
+    }
+    url[pos] = '\0';
+	printf("URL: %s\n", url);
 }
