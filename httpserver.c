@@ -167,15 +167,21 @@ static void process_client(struct sockaddr_in *client_addr, int connection)
 
 	/* Parse through request with sscanf and putting into above fields */
 	sscanf(buffer, "%s %s %s", verb, uri, version);
+	printf("Verb: %s URI: %s Version: %s\n", verb, uri, version);
 
 	/* Get the file url */
 	get_file_url(uri, url, file_ext);
 	
 	char* response = (char*)calloc(MAX_MESSAGE, sizeof(char));
-	int* response_len = NULL;
+	int response_len = 0;
 
 	/* Create server response */
-	build_response(url, file_ext, response, response_len);
+	build_response(url, file_ext, response, &response_len);
+	printf("Response: %s\n", response);
+
+	/* send HTTP response to client */
+	send(connection, response, response_len, 0);
+
 	free(buffer);
 } // end of accept inner-while
 
@@ -184,16 +190,24 @@ static void process_client(struct sockaddr_in *client_addr, int connection)
 */
 static void build_response(char* url, char* file_ext, char* response, int* response_len)
 {
-	char* http_header = (char*)calloc(MAX_MESSAGE, sizeof(char));
-	snprintf(http_header, MAX_MESSAGE,
-	 "HTTP/1.1 200 OK\r\n"
-	 "Content-Type: %s\r\n"
-	 "\r\n",
-	 file_ext);
+    char* http_header = (char*)calloc(MAX_MESSAGE, sizeof(char));
+    snprintf(http_header, MAX_MESSAGE,
+             "HTTP/1.1 200 OK\r\n"
+             "Content-Type: %s\r\n"
+             "\r\n",
+             file_ext);
 
-	/* Open file Stream in READ-ONLY*/
-//	 FILE* file = fopen(url, "r");
-	int fd = open(url, O_RDONLY);
+    // Construct the file path by combining the base path and the URL
+    char file_path[MAX_MESSAGE];
+    snprintf(file_path, MAX_MESSAGE, "httpdocs/%s", url);
+
+	// Test hardcode
+//	snprintf(file_path, MAX_MESSAGE, "/home/kohlmanz/networking_dev/HTTP-1.1-Server/httpdocs/%s", url);    // snprintf(file_path, MAX_MESSAGE, "httpdocs/%s", url);
+
+    /* Open file Stream in READ-ONLY*/
+    int fd = open(file_path, O_RDONLY);
+
+    printf("fd: %i\n", fd);
 
 	 /* File Failed to open... 404 error*/
 	 if(fd < 0)
@@ -230,56 +244,68 @@ static void build_response(char* url, char* file_ext, char* response, int* respo
 }
 
 
-/**]
+/**
  * Sets URL and file_exntesion
  * Formats URL by removing all special cases (algorithm borrowed)
  * Removes URL parameters by looking for last ? and replacing with null terminator
- * Creates local "httpdocs" directory for URL contents
 */
 static void get_file_url(char* uri, char* url, char* file_ext)
 {
-	/* Local Vars */
-	const char* DEFAULT_EXT = ".html";
+    /* Local Vars */
+    const char* DEFAULT_EXT = ".html";
+	const char* BASE_PATH = "";
 
-	/* Locate URL parameters, and remove */
-	char* url_parameters = strrchr(uri, '?');
-	if(url_parameters)
-	{
-		*url_parameters = '\0';
-	}
-    
-	/* Add directory for file at beginning of url and copy uri into url */
-	// strcpy(url, "httpdocs");
-	// strcat(url, uri);
+	// Init the url string
+	strcpy(url, "");
 
-	/* Set file exntension var */
-	file_ext = strrchr(url, '.');
+	// Prepend the base path
+	strcat(url, BASE_PATH);
 
-	/* Default to .html if no extension provided */
-	if(!file_ext || file_ext == url)
-	{
-		strcpy(file_ext, DEFAULT_EXT);
-		strcat(url, file_ext);
-	}
+    // Check if the URI starts with a forward slash
+    if (uri[0] != '/')
+    {
+        strcat(url, "/");
+    }
+
+    strcat(url, uri);
+
+    /* Locate URL parameters, and remove */
+    char* url_parameters = strrchr(uri, '?');
+    if (url_parameters)
+    {
+        *url_parameters = '\0';
+    }
+
+    /* Set file extension var */
+    file_ext = strrchr(uri, '.');
+
+    /* Default to .html if no extension provided */
+    if (!file_ext || file_ext == url)
+    {
+        strcpy(file_ext, DEFAULT_EXT);
+        strcat(url, file_ext);
+    }
+
+    printf("File ext: %s\n", file_ext);
 
 	/**
 	 * The following encoding algorithm taken from 
 	 * URL https://gist.github.com/jesobreira/4ba48d1699b7527a4a514bfa1d70f61a
 	*/
-    const char *hex = "0123456789abcdef";
+    // const char *hex = "0123456789abcdef";
 
-    int pos = 0;
-    for (int i = 0; i < strlen(uri); i++) {
-        if (('a' <= uri[i] && uri[i] <= 'z')
-            || ('A' <= uri[i] && uri[i] <= 'Z')
-            || ('0' <= uri[i] && uri[i] <= '9')) {
-                url[pos++] = uri[i];
-            } else {
-                url[pos++] = '%';
-                url[pos++] = hex[uri[i] >> 4];
-                url[pos++] = hex[uri[i] & 15];
-            }
-    }
-    url[pos] = '\0';
+    // int pos = 0;
+    // for (int i = 0; i < strlen(uri); i++) {
+    //     if (('a' <= uri[i] && uri[i] <= 'z')
+    //         || ('A' <= uri[i] && uri[i] <= 'Z')
+    //         || ('0' <= uri[i] && uri[i] <= '9')) {
+    //             url[pos++] = uri[i];
+    //         } else {
+    //             url[pos++] = '%';
+    //             url[pos++] = hex[uri[i] >> 4];
+    //             url[pos++] = hex[uri[i] & 15];
+    //         }
+    // }
+    // url[pos] = '\0';
 	printf("URL: %s\n", url);
 }
