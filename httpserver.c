@@ -14,12 +14,12 @@
 #include <fcntl.h>
 
 static void process_client(struct sockaddr_in *client_addr, int connection);
-static void build_response(char* url, char* file_ext, char* response, int* response_len);
-static void get_file_url(char* uri, char* url, char* file_ext);
+static void build_response(char *url, char *file_ext, char *response, int *response_len);
+static void get_file_url(char *uri, char *url, char *file_ext);
 
 // Max message to echo
 #define MAX_MESSAGE 100000
-#define MAX_EXT	10
+#define MAX_EXT 10
 
 /* server main routine */
 
@@ -27,26 +27,26 @@ int main(int argc, char **argv)
 {
 
 	// locals
-	unsigned short port = 80; // default port
-	int sock;					// socket descriptor
+	int port = 80; // default port
+	int sock;				  // socket descriptor
 	pid_t pid;
 
 	// Was help requested?  Print usage statement
 	if (argc > 1 && ((!strcmp(argv[1], "-?")) || (!strcmp(argv[1], "-h"))))
 	{
-		printf("\nUsage: tcpechoserver [-p port] port is the requested \
+		printf("\nUsage: httpserver [-p port] port is the requested \
  port that the server monitors.  If no port is provided, the server \
- listens on port 3300.\n\n");
-		exit(0);
+ listens on port 80.\n\n");
+		exit(EXIT_SUCCESS);
 	}
 
 	// get the port from ARGV
 	if (argc > 1 && !strcmp(argv[1], "-p"))
 	{
-		if (sscanf(argv[2], "%hu", &port) != 1)
+		if (sscanf(argv[2], "%i", &port) != 1)
 		{
 			perror("Error parsing port option");
-			exit(0);
+			exit(EXIT_FAILURE);
 		}
 	}
 
@@ -56,11 +56,10 @@ int main(int argc, char **argv)
 	// for TCP, we want IP protocol domain (PF_INET)
 	// and TCP transport type (SOCK_STREAM)
 	// no alternate protocol - 0, since we have already specified IP
-
 	if ((sock = socket(PF_INET, SOCK_STREAM, 0)) < 0)
 	{
 		perror("Error on socket creation");
-		exit(1);
+		exit(EXIT_FAILURE);
 	}
 
 	// lose the pesky "Address already in use" error message
@@ -69,7 +68,7 @@ int main(int argc, char **argv)
 	if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1)
 	{
 		perror("setsockopt");
-		exit(1);
+		exit(EXIT_FAILURE);
 	}
 
 	// establish address - this is the server and will
@@ -88,7 +87,7 @@ int main(int argc, char **argv)
 	if (bind(sock, (struct sockaddr *)&sock_address, sizeof(sock_address)) < 0)
 	{
 		perror("Problem binding");
-		exit(-1);
+		exit(EXIT_FAILURE);
 	}
 
 	// extra step to TCP - listen on the port for a connection
@@ -96,7 +95,7 @@ int main(int argc, char **argv)
 	if (listen(sock, 5) < 0)
 	{
 		perror("Error calling listen()");
-		exit(-1);
+		exit(EXIT_FAILURE);
 	}
 
 	// go into forever loop and echo whatever message is received
@@ -112,7 +111,7 @@ int main(int argc, char **argv)
 		if ((connection = accept(sock, (struct sockaddr *)&client_addr, &client_addr_len)) < 0)
 		{
 			perror("Error calling accept");
-			exit(-1);
+			exit(EXIT_FAILURE);
 		}
 		// Create child process
 		pid = fork();
@@ -121,13 +120,18 @@ int main(int argc, char **argv)
 			perror("ERROR on fork");
 			close(sock);
 			close(connection);
-			exit(-1);
+			exit(EXIT_FAILURE);
 		}
 		else if (!pid)
 		{
+			char client_ip[INET_ADDRSTRLEN];
+			inet_ntop(AF_INET, &(client_addr.sin_addr.s_addr), client_ip, INET_ADDRSTRLEN);
+			printf("Client connected from IP address: %s\n", client_ip);
+
 			process_client(&client_addr, connection);
 			printf("Done processing clinet\n");
 			close(sock);
+			exit(EXIT_SUCCESS);
 		}
 		else
 		{
@@ -136,14 +140,14 @@ int main(int argc, char **argv)
 	} // end of outer loop
 
 	// will never get here
-	return (0);
+	return 0;
 }
 
 static void process_client(struct sockaddr_in *client_addr, int connection)
 {
 	// Read client GET request by storing into buffer from read
 	char *buffer = calloc(MAX_MESSAGE, sizeof(char));
-	int bytes_read = read(connection, buffer, MAX_MESSAGE - 1);	
+	int bytes_read = read(connection, buffer, MAX_MESSAGE - 1);
 	/* Determine if read was successful */
 	if (bytes_read == 0)
 	{ // socket closed
@@ -171,8 +175,8 @@ static void process_client(struct sockaddr_in *client_addr, int connection)
 
 	/* Get the file url */
 	get_file_url(uri, url, file_ext);
-	
-	char* response = (char*)calloc(MAX_MESSAGE, sizeof(char));
+
+	char *response = (char *)calloc(MAX_MESSAGE, sizeof(char));
 	int response_len = 0;
 
 	/* Create server response */
@@ -187,47 +191,46 @@ static void process_client(struct sockaddr_in *client_addr, int connection)
 
 /**
  * Builds the server response field for HTTP 1.1
-*/
-static void build_response(char* url, char* file_ext, char* response, int* response_len)
+ */
+static void build_response(char *url, char *file_ext, char *response, int *response_len)
 {
-    char* http_header = (char*)calloc(MAX_MESSAGE, sizeof(char));
-    snprintf(http_header, MAX_MESSAGE,
-             "HTTP/1.1 200 OK\r\n"
-             "Content-Type: %s\r\n"
-             "\r\n",
-             file_ext);
+	char *http_header = (char *)calloc(MAX_MESSAGE, sizeof(char));
+	snprintf(http_header, MAX_MESSAGE,
+			 "HTTP/1.1 200 OK\r\n"
+			 "Content-Type: %s\r\n"
+			 "\r\n",
+			 file_ext);
 
-    // Construct the file path by combining the base path and the URL
-    char file_path[MAX_MESSAGE];
-    snprintf(file_path, MAX_MESSAGE, "httpdocs/%s", url);
+	// Construct the file path by combining the base path and the URL
+	char file_path[MAX_MESSAGE];
+	snprintf(file_path, MAX_MESSAGE, "%s", url);
 
-	// Test hardcode
-//	snprintf(file_path, MAX_MESSAGE, "/home/kohlmanz/networking_dev/HTTP-1.1-Server/httpdocs/%s", url);    // snprintf(file_path, MAX_MESSAGE, "httpdocs/%s", url);
+	/* Open file Stream in READ-ONLY */
+	int fd = open(file_path, O_RDONLY);
 
-    /* Open file Stream in READ-ONLY*/
-    int fd = open(file_path, O_RDONLY);
+	printf("fd: %i\n", fd);
 
-    printf("fd: %i\n", fd);
-
-	 /* File Failed to open... 404 error*/
-	 if(fd < 0)
-	 {
+	/* File Failed to open... 404 error*/
+	if (fd < 0)
+	{
 		snprintf(response, MAX_MESSAGE,
-		"HTTP/1.1 404 Not Found\r\n"
-		"Content-Type: text/plain\r\n"
-		"\r\n"
-		"404 Not Found");
+				 "HTTP/1.1 404 Not Found\r\n"
+				 "Content-Type: text/plain\r\n"
+				 "\r\n"
+				 "404 Not Found");
 
 		*response_len = strlen(response);
+		free(http_header);
+		close(fd);
 		return;
-	 }
+	}
 
-	 /* Get file size with fstat */
-	 struct stat file_info;
-	 fstat(fd, &file_info);
-	
-	 // Get file size
-	 off_t file_size = file_info.st_size;
+	/* Get file size with fstat */
+	struct stat file_info;
+	fstat(fd, &file_info);
+
+	// Get file size
+	off_t file_size = file_info.st_size;
 
 	// Set response and response_len
 	memcpy(response, http_header, strlen(http_header));
@@ -235,77 +238,39 @@ static void build_response(char* url, char* file_ext, char* response, int* respo
 
 	// Put file into buffer
 	ssize_t bytes_read;
-	while((bytes_read = read(fd, response + *response_len, MAX_MESSAGE-*response_len)) > 0)
+	while ((bytes_read = read(fd, response + *response_len, MAX_MESSAGE - *response_len)) > 0)
 	{
 		*response_len += bytes_read;
 	}
+
 	free(http_header);
 	close(fd);
 }
-
 
 /**
  * Sets URL and file_exntesion
  * Formats URL by removing all special cases (algorithm borrowed)
  * Removes URL parameters by looking for last ? and replacing with null terminator
-*/
-static void get_file_url(char* uri, char* url, char* file_ext)
+ */
+static void get_file_url(char *uri, char *url, char *file_ext)
 {
-    /* Local Vars */
-    const char* DEFAULT_EXT = ".html";
-	const char* BASE_PATH = "";
+	/* Local Vars */
+	const char *BASE_PATH = "httpdocs/";
 
 	// Init the url string
-	strcpy(url, "");
+	memset(url, '\0', MAX_MESSAGE);
 
 	// Prepend the base path
 	strcat(url, BASE_PATH);
+	strcat(url, uri);
 
-    // Check if the URI starts with a forward slash
-    if (uri[0] != '/')
-    {
-        strcat(url, "/");
-    }
+	/* Locate URL parameters, and remove */
+	char *url_parameters = strrchr(uri, '?');
+	if (url_parameters)
+	{
+		*url_parameters = '\0';
+	}
 
-    strcat(url, uri);
-
-    /* Locate URL parameters, and remove */
-    char* url_parameters = strrchr(uri, '?');
-    if (url_parameters)
-    {
-        *url_parameters = '\0';
-    }
-
-    /* Set file extension var */
-    file_ext = strrchr(uri, '.');
-
-    /* Default to .html if no extension provided */
-    if (!file_ext || file_ext == url)
-    {
-        strcpy(file_ext, DEFAULT_EXT);
-        strcat(url, file_ext);
-    }
-
-    printf("File ext: %s\n", file_ext);
-
-	/**
-	 * The following encoding algorithm taken from 
-	 * URL https://gist.github.com/jesobreira/4ba48d1699b7527a4a514bfa1d70f61a
-	*/
-    // const char *hex = "0123456789abcdef";
-
-    // int pos = 0;
-    // for (int i = 0; i < strlen(uri); i++) {
-    //     if (('a' <= uri[i] && uri[i] <= 'z')
-    //         || ('A' <= uri[i] && uri[i] <= 'Z')
-    //         || ('0' <= uri[i] && uri[i] <= '9')) {
-    //             url[pos++] = uri[i];
-    //         } else {
-    //             url[pos++] = '%';
-    //             url[pos++] = hex[uri[i] >> 4];
-    //             url[pos++] = hex[uri[i] & 15];
-    //         }
-    // }
-    // url[pos] = '\0';
-	printf("URL: %s\n", url);
+	/* Set file extension var */
+	file_ext = strrchr(uri, '.');
 }
