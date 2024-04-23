@@ -12,14 +12,18 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <fcntl.h>
+#include <signal.h>
+#include <sys/wait.h>
+
 
 static void process_client(struct sockaddr_in *client_addr, int connection);
-static void build_response(char *url, char *file_ext, char *response, int *response_len);
-static void get_file_url(char *uri, char *url, char *file_ext);
+static void build_response(char *url, char *content_type, char *response, int *response_len);
+static void get_file_url(char *uri, char *url);
+static void get_content_type(char* url, char* content_type);
 
 // Max message to echo
 #define MAX_MESSAGE 100000
-#define MAX_EXT 10
+#define MAX_EXT 16
 
 /* server main routine */
 
@@ -102,6 +106,7 @@ int main(int argc, char **argv)
 	// to console and back to source
 	// Create a child process for each connection
 	int connection;
+	int child_status;
 	while (1)
 	{
 		socklen_t client_addr_len = sizeof(client_addr);
@@ -136,6 +141,16 @@ int main(int argc, char **argv)
 		else
 		{
 			close(connection);
+			pid_t terminated = waitpid(pid, &child_status,0);
+
+			if(terminated == -1)
+			{
+				perror("waitpid");
+			} else {
+				if(WIFEXITED(child_status)){
+            		WEXITSTATUS(child_status);
+				}
+			}
 		}
 	} // end of outer loop
 
@@ -167,20 +182,23 @@ static void process_client(struct sockaddr_in *client_addr, int connection)
 	}
 
 	/* Some local vars */
-	char verb[MAX_MESSAGE], uri[MAX_MESSAGE], version[MAX_MESSAGE], url[MAX_MESSAGE], file_ext[MAX_EXT];
+	char verb[MAX_MESSAGE], uri[MAX_MESSAGE], version[MAX_MESSAGE], url[MAX_MESSAGE], content_type[MAX_EXT];
 
 	/* Parse through request with sscanf and putting into above fields */
 	sscanf(buffer, "%s %s %s", verb, uri, version);
-	printf("Verb: %s URI: %s Version: %s\n", verb, uri, version);
+//	printf("Verb: %s URI: %s Version: %s\n", verb, uri, version);
 
 	/* Get the file url */
-	get_file_url(uri, url, file_ext);
+	get_file_url(uri, url);
+
+	/* Get file type */
+	get_content_type(url, content_type);
 
 	char *response = (char *)calloc(MAX_MESSAGE, sizeof(char));
 	int response_len = 0;
 
 	/* Create server response */
-	build_response(url, file_ext, response, &response_len);
+	build_response(url, content_type, response, &response_len);
 	printf("Response: %s\n", response);
 
 	/* send HTTP response to client */
@@ -192,59 +210,46 @@ static void process_client(struct sockaddr_in *client_addr, int connection)
 /**
  * Builds the server response field for HTTP 1.1
  */
-static void build_response(char *url, char *file_ext, char *response, int *response_len)
+static void build_response(char* url, char* content_type, char* response, int* response_len)
 {
-	char *http_header = (char *)calloc(MAX_MESSAGE, sizeof(char));
-	snprintf(http_header, MAX_MESSAGE,
-			 "HTTP/1.1 200 OK\r\n"
-			 "Content-Type: %s\r\n"
-			 "\r\n",
-			 file_ext);
-
 	// Construct the file path by combining the base path and the URL
 	char file_path[MAX_MESSAGE];
 	snprintf(file_path, MAX_MESSAGE, "%s", url);
 
-	/* Open file Stream in READ-ONLY */
-	int fd = open(file_path, O_RDONLY);
-
-	printf("fd: %i\n", fd);
-
-	/* File Failed to open... 404 error*/
-	if (fd < 0)
-	{
+	/* Open file Stream as read-only binary */
+    FILE* file = fopen(url, "rb");
+    if (file == NULL) {
 		snprintf(response, MAX_MESSAGE,
 				 "HTTP/1.1 404 Not Found\r\n"
 				 "Content-Type: text/plain\r\n"
+				 "Content-Length: 0\r\n"
 				 "\r\n"
 				 "404 Not Found");
 
 		*response_len = strlen(response);
-		free(http_header);
-		close(fd);
-		return;
-	}
+        return;
+    }
 
-	/* Get file size with fstat */
-	struct stat file_info;
-	fstat(fd, &file_info);
+    // Get the file size
+    fseek(file, 0, SEEK_END);
+    long file_size = ftell(file);
+    rewind(file);
 
-	// Get file size
-	off_t file_size = file_info.st_size;
+    // Set the response header
+    snprintf(response, MAX_MESSAGE,
+             "HTTP/1.1 200 OK\r\n"
+             "Content-Type: %s\r\n"
+             "Content-Length: %ld\r\n"
+             "\r\n",
+             content_type, file_size);
 
-	// Set response and response_len
-	memcpy(response, http_header, strlen(http_header));
-	*response_len = strlen(http_header);
+    *response_len = strlen(response);
 
-	// Put file into buffer
-	ssize_t bytes_read;
-	while ((bytes_read = read(fd, response + *response_len, MAX_MESSAGE - *response_len)) > 0)
-	{
-		*response_len += bytes_read;
-	}
+    // Read the file contents into the response buffer
+    size_t bytes_read = fread(response + *response_len, 1, file_size, file);
+    *response_len += bytes_read;
 
-	free(http_header);
-	close(fd);
+    fclose(file);
 }
 
 /**
@@ -252,7 +257,7 @@ static void build_response(char *url, char *file_ext, char *response, int *respo
  * Formats URL by removing all special cases (algorithm borrowed)
  * Removes URL parameters by looking for last ? and replacing with null terminator
  */
-static void get_file_url(char *uri, char *url, char *file_ext)
+static void get_file_url(char *uri, char *url)
 {
 	/* Local Vars */
 	const char *BASE_PATH = "httpdocs/";
@@ -270,7 +275,25 @@ static void get_file_url(char *uri, char *url, char *file_ext)
 	{
 		*url_parameters = '\0';
 	}
+}
 
-	/* Set file extension var */
-	file_ext = strrchr(uri, '.');
+/**
+ * Sets the contnent type based on the file extension
+ * Only JPG and HTML supported. Defaults to .HTML
+*/
+static void get_content_type(char* url, char* content_type)
+{
+	// Local vars
+	const char* JPG = ".jpg";
+
+	// Locate ext by dot
+	const char* ext = strrchr(url, '.');
+
+	if(!ext){
+		strcpy(content_type, "text/html");
+	}  else if(!strcmp(ext, JPG)){
+		strcpy(content_type, "image/jpeg");
+	} else{
+		strcpy(content_type, "text/html");
+	}
 }
