@@ -17,9 +17,10 @@
 
 
 static void process_client(struct sockaddr_in *client_addr, int connection);
-static void build_response(char *url, char *content_type, char *response, int *response_len);
+static void build_response(char* url, char* content_type, int connection);
 static void get_file_url(char *uri, char *url);
 static void get_content_type(char* url, char* content_type);
+static void generate_video(void);
 
 // Max message to echo
 #define MAX_MESSAGE 100000
@@ -29,7 +30,6 @@ static void get_content_type(char* url, char* content_type);
 
 int main(int argc, char **argv)
 {
-
 	// locals
 	int port = 80; // default port
 	int sock;				  // socket descriptor
@@ -129,12 +129,16 @@ int main(int argc, char **argv)
 		}
 		else if (!pid)
 		{
+			/* Print the connection IP to console */
 			char client_ip[INET_ADDRSTRLEN];
 			inet_ntop(AF_INET, &(client_addr.sin_addr.s_addr), client_ip, INET_ADDRSTRLEN);
 			printf("Client connected from IP address: %s\n", client_ip);
 
+			/* Main HTTP routine */
 			process_client(&client_addr, connection);
 			printf("Done processing clinet\n");
+
+			/* Close when done */
 			close(sock);
 			exit(EXIT_SUCCESS);
 		}
@@ -158,11 +162,17 @@ int main(int argc, char **argv)
 	return 0;
 }
 
+/**
+ * Process the client by parsing the request, building the response, and sending the data back to the client
+*/
 static void process_client(struct sockaddr_in *client_addr, int connection)
 {
 	// Read client GET request by storing into buffer from read
 	char *buffer = calloc(MAX_MESSAGE, sizeof(char));
+
+	/* Read from port */
 	int bytes_read = read(connection, buffer, MAX_MESSAGE - 1);
+
 	/* Determine if read was successful */
 	if (bytes_read == 0)
 	{ // socket closed
@@ -186,68 +196,86 @@ static void process_client(struct sockaddr_in *client_addr, int connection)
 
 	/* Parse through request with sscanf and putting into above fields */
 	sscanf(buffer, "%s %s %s", verb, uri, version);
-//	printf("Verb: %s URI: %s Version: %s\n", verb, uri, version);
 
 	/* Get the file url */
 	get_file_url(uri, url);
+	printf("URL %s\n", url);
 
 	/* Get file type */
 	get_content_type(url, content_type);
 
-	char *response = (char *)calloc(MAX_MESSAGE, sizeof(char));
-	int response_len = 0;
+	/* Generate mandel video */
+	generate_video();
 
-	/* Create server response */
-	build_response(url, content_type, response, &response_len);
-	printf("Response: %s\n", response);
-
-	/* send HTTP response to client */
-	send(connection, response, response_len, 0);
-
+	/* Create server response  && send data in chuncks */
+	build_response(url, content_type, connection);
+	
+	/* Free buffer after done */
 	free(buffer);
 } // end of accept inner-while
 
 /**
- * Builds the server response field for HTTP 1.1
+ * Builds the server response field for HTTP 1.1 and sends the data in chuncks
  */
-static void build_response(char* url, char* content_type, char* response, int* response_len)
-{
-	// Construct the file path by combining the base path and the URL
-	char file_path[MAX_MESSAGE];
-	snprintf(file_path, MAX_MESSAGE, "%s", url);
+static void build_response(char* url, char* content_type, int connection) {
+	/* Local Vars */
+    char file_path[MAX_MESSAGE];
+	const char* READ_BINARY = "rb";
 
-	/* Open file Stream as read-only binary */
-    FILE* file = fopen(url, "rb");
+	/* Format file_path */
+    snprintf(file_path, MAX_MESSAGE, "%s", url);
+
+	/* Open requested page in read-binary mode */
+    FILE* file = fopen(file_path, READ_BINARY);
+
+	/* If Null, send 404 response header*/
     if (file == NULL) {
-		snprintf(response, MAX_MESSAGE,
-				 "HTTP/1.1 404 Not Found\r\n"
-				 "Content-Type: text/plain\r\n"
-				 "Content-Length: 0\r\n"
-				 "\r\n"
-				 "404 Not Found");
-
-		*response_len = strlen(response);
+        char error_response[] = "HTTP/1.1 404 Not Found\r\n"
+                                "Content-Type: text/plain\r\n"
+                                "Content-Length: 0\r\n"
+                                "\r\n"
+                                "404 Not Found";
+        send(connection, error_response, strlen(error_response), 0);
         return;
     }
 
-    // Get the file size
-    fseek(file, 0, SEEK_END);
-    long file_size = ftell(file);
-    rewind(file);
-
-    // Set the response header
-    snprintf(response, MAX_MESSAGE,
+	/* Response header if good */
+    char response_header[MAX_MESSAGE];
+    snprintf(response_header, MAX_MESSAGE,
              "HTTP/1.1 200 OK\r\n"
              "Content-Type: %s\r\n"
-             "Content-Length: %ld\r\n"
+             "Transfer-Encoding: chunked\r\n"
              "\r\n",
-             content_type, file_size);
+             content_type);
 
-    *response_len = strlen(response);
+	/* Send header */
+    send(connection, response_header, strlen(response_header), 0);
 
-    // Read the file contents into the response buffer
-    size_t bytes_read = fread(response + *response_len, 1, file_size, file);
-    *response_len += bytes_read;
+	/* Send data in chuncks for large videos */
+	char chunk[MAX_MESSAGE]; 
+	size_t bytes_read; 
+
+	while ((bytes_read = fread(chunk, 1, sizeof(chunk), file)) > 0) { // Loop until the end of the file is reached
+		/* Declare a character array to store the chunk header */
+		char chunk_header[16]; 
+
+		/* Generate the chunk header in hexadecimal format followed by a carriage return and newline */
+		snprintf(chunk_header, sizeof(chunk_header), "%X\r\n", (unsigned int)bytes_read); 
+
+		/* Sendt the chunck header to the client */
+		send(connection, chunk_header, strlen(chunk_header), 0);
+
+		/* Send the chunck data to the client */
+		send(connection, chunk, bytes_read, 0);
+
+		/* Send a carriage return and newline after the chunk data */
+		send(connection, "\r\n", 2, 0); 
+	}
+
+    char end_chunk[] = "0\r\n\r\n";
+
+	// Send the final chunk data over the network connection
+    send(connection, end_chunk, strlen(end_chunk), 0);
 
     fclose(file);
 }
@@ -260,7 +288,7 @@ static void build_response(char* url, char* content_type, char* response, int* r
 static void get_file_url(char *uri, char *url)
 {
 	/* Local Vars */
-	const char *BASE_PATH = "httpdocs/";
+	const char *BASE_PATH = "httpdocs";
 
 	// Init the url string
 	memset(url, '\0', MAX_MESSAGE);
@@ -285,6 +313,7 @@ static void get_content_type(char* url, char* content_type)
 {
 	// Local vars
 	const char* JPG = ".jpg";
+	const char* MP4 = ".mp4";
 
 	// Locate ext by dot
 	const char* ext = strrchr(url, '.');
@@ -293,7 +322,49 @@ static void get_content_type(char* url, char* content_type)
 		strcpy(content_type, "text/html");
 	}  else if(!strcmp(ext, JPG)){
 		strcpy(content_type, "image/jpeg");
+	} else if(!strcmp(ext, MP4)){
+		strcpy(content_type, "video/mp4");
 	} else{
 		strcpy(content_type, "text/html");
 	}
+}
+
+/**
+ * Generates the mandlebrot videos wind random center values via pipes
+*/
+static void generate_video(void)
+{
+	// Generate random mandelbro image
+	char command[1000];
+	srand(time(NULL));
+    const float MIN = -1.0;
+    const float MAX = 1.0;
+	const char* READ = "r";
+
+    // Seed the random number generator
+    srand(time(NULL));
+
+    // Generate random floats
+    float x = ((float)rand() / RAND_MAX) * (MAX - MIN) + MIN;
+    float y = ((float)rand() / RAND_MAX) * (MAX - MIN) + MIN;
+
+	// Put into command field
+	snprintf(command, 100, "cd /home/kohlmanz/dev/mandelbrot-zachkohl1 && ./mandelmovie -c 10 -m 250 -x %f -y %f", x, y);
+	
+	// Run command via read-only pipe and return
+	FILE* f = popen(command, READ);
+	pclose(f);
+
+	// Create and copy video commands
+	const char* create_video = "cd /home/kohlmanz/dev/mandelbrot-zachkohl1 && ffmpeg -y -i mandel%d.jpg mandel.mp4";
+	const char* copy_video = "cp mandel.mp4 ~/networking_dev/HTTP-1.1-Server/httpdocs/";
+	
+	strcpy(command, create_video);
+	strcat(command, " && ");
+	strcat(command, copy_video);
+	printf("Command: %s\n", command);
+
+	// Create the mp4 video and copy into httpdocs
+	FILE* vid = popen(command, READ);
+	pclose(vid);
 }
