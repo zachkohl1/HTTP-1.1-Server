@@ -1,15 +1,84 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mandelbrot Video</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mandelbrot Video</title>
+  <style>
+    #video-container {
+      position: absolute;
+    }
+    video {
+      display: block;
+    }
+  </style>
 </head>
 <body>
-    <h1>Mandelbrot Video</h1>
-    <video width="800" height="600" controls>
-        <source src="./mandel.mp4" type="video/mp4">
-        Your browser does not support the video tag.
-    </video>
+  <h1>Mandelbrot Video</h1>
+  <div id="video-container">
+    <video width="400" height="300" controls autoplay loop muted>
+      <source src="./mandel.mp4" type="video/mp4">
+      Your browser does not support the video tag.
+  </video>
+  </div>
+
+  <script>
+    const videoContainer = document.getElementById('video-container');
+    const video = videoContainer.querySelector('video');
+    const containerWidth = window.innerWidth;
+    const containerHeight = window.innerHeight;
+    const bounceSound = new Audio('./bounce.mp3'); // Replace with your sound file path
+
+    const videoRect = video.getBoundingClientRect();
+    const videoWidth = videoRect.width;
+    const videoHeight = videoRect.height;
+
+    let xVelocity = 3;
+    let yVelocity = 2;
+
+    function playBounceSoundAndResetVideo() {
+      bounceSound.play();
+      video.currentTime = 0; // Reset the video playback time
+    }
+
+    function moveVideo() {
+    let videoX = videoContainer.offsetLeft;
+    let videoY = videoContainer.offsetTop;
+    videoX += xVelocity;
+    videoY += yVelocity;
+
+    if (videoX <= 0 || videoX + videoWidth >= containerWidth) {
+        videoX = videoX <= 0 ? 0 : containerWidth - videoWidth;
+        xVelocity = -xVelocity;
+        restartAudio();
+    }
+
+    if (videoY <= 0 || videoY + videoHeight >= containerHeight) {
+        videoY = videoY <= 0 ? 0 : containerHeight - videoHeight;
+        yVelocity = -yVelocity;
+        restartAudio();
+    }
+
+    videoContainer.style.left = `${videoX}px`;
+    videoContainer.style.top = `${videoY}px`;
+    requestAnimationFrame(moveVideo);
+}
+
+  function restartAudio() {
+    bounceSound.currentTime = 0; // Reset the audio playback position
+    bounceSound.play(); // Play the audio from the beginning
+  }
+
+video.autoplay = true;
+video.loop = true;
+video.muted = true;
+moveVideo();
+
+    video.autoplay = true;
+    video.loop = true;
+    video.muted = true;
+
+    moveVideo();
+  </script>
 </body>
 </html>
