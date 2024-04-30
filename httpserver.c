@@ -6,8 +6,18 @@
  * @date 4/25/2024
  */
 
+/**
+ * Overall, this lab went really well. The only problem I had was sending the whole video of mandelbrot
+ * once generated in one http request. Instead of sending all the data in one huge buffer, I send it in chuncks.
+ * In hind sight, I could have saved a lot of time if I simply increased the size of the buffer.
+ * This problem took up the majority of my time, the rest was using popen to write commands and run
+ * the mandelbrot image generator, then using video software to generate a 2s video from the images.
+ * I will say, using AI to help debug with memory leaks and HTML/JS problems helped A TON.
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h> 
 #include <unistd.h>
 #include <string.h>
 #include <strings.h>
@@ -25,7 +35,7 @@ static void process_client(struct sockaddr_in *client_addr, int connection);
 static void build_response(char *url, char *content_type, int connection);
 static void get_file_url(char *uri, char *url);
 static void get_content_type(char *url, char *content_type);
-static void generate_video(void);
+static void generate_video(float x, float y);
 
 // Max message to echo
 #define MAX_MESSAGE 100000
@@ -168,56 +178,90 @@ int main(int argc, char **argv)
  */
 static void process_client(struct sockaddr_in *client_addr, int connection)
 {
-	// Read client GET request by storing into buffer from read
-	char *buffer = calloc(MAX_MESSAGE, sizeof(char));
+    // Read client request by storing into buffer from read
+    char *buffer = calloc(MAX_MESSAGE, sizeof(char));
 
-	/* Read from port */
-	int bytes_read = read(connection, buffer, MAX_MESSAGE - 1);
+    /* Read from port */
+    int bytes_read = read(connection, buffer, MAX_MESSAGE - 1);
 
-	/* Determine if read was successful */
-	if (bytes_read == 0)
-	{ // socket closed
-		printf("====Client Disconnected====\n");
-		close(connection);
-		free(buffer);
-		return;
-	}
+    /* Determine if read was successful */
+    if (bytes_read == 0)
+    { // socket closed
+        printf("====Client Disconnected====\n");
+        close(connection);
+        free(buffer);
+        return;
+    }
 
-	// see if client wants us to disconnect
-	if (strncmp(buffer, "quit", 4) == 0)
-	{
-		printf("====Server Disconnecting====\n");
-		close(connection);
-		free(buffer);
-		return;
-	}
+    // see if client wants us to disconnect
+    if (strncmp(buffer, "quit", 4) == 0)
+    {
+        printf("====Server Disconnecting====\n");
+        close(connection);
+        free(buffer);
+        return;
+    }
 
-	/* Some local vars */
-	char verb[MAX_MESSAGE], uri[MAX_MESSAGE], version[MAX_MESSAGE], url[MAX_MESSAGE], content_type[MAX_EXT];
+    /* Some local vars */
+    char verb[MAX_MESSAGE], uri[MAX_MESSAGE], version[MAX_MESSAGE], url[MAX_MESSAGE], content_type[MAX_EXT];
 
-	/* Parse through request with sscanf and putting into above fields */
-	sscanf(buffer, "%s %s %s", verb, uri, version);
+    /* Parse through request with sscanf and putting into above fields */
+    sscanf(buffer, "%s %s %s", verb, uri, version);
 
-	/* Get the file url */
-	get_file_url(uri, url);
-	printf("URL %s\n", url);
+    /* Get the file url */
+    get_file_url(uri, url);
+    printf("URL %s\n", url);
 
-	/* Get file type */
-	get_content_type(url, content_type);
+    /* Get file type */
+    get_content_type(url, content_type);
 
-	if (strstr(url, "mandel"))
-	{
-		/* Generate mandel video */
-		generate_video();
-	}
+    // if (strstr(url, "mandel.html"))
+    // {
+	// 	printf("Verb %s\n", verb);
+    //     /* Create server response  && send data in chuncks */
+    //     build_response(url, content_type, connection);
+    // }
 
-	/* Create server response  && send data in chuncks */
-	build_response(url, content_type, connection);
+    if (strstr(url, "mandel") && !strcmp(verb, "POST"))
+    {
+		printf("Verb %s\n", verb);
+        // Read the POST request body
 
-	/* Free buffer after done */
-	free(buffer);
-} // end of accept inner-while
+        // Parse the x and y values from the request body
+		printf("buffer: %s\n\n", buffer);
 
+		float x, y;
+		// Parse the POST request body
+		char *x_pos = strstr(buffer, "x=");
+		char *y_pos = strstr(buffer, "y=");
+		if (x_pos && y_pos)
+		{
+			x = atof(x_pos + 2);
+			y = atof(y_pos + 2);
+		}
+		else
+		{
+			printf("Error: x and/or y not found in POST request\n");
+		}
+
+		printf("x: %f y: %f\n", x, y);
+
+        /* Generate mandel video */
+        generate_video(x, y);
+
+        /* Create server response  && send data in chuncks */
+        build_response(url, content_type, connection);
+
+    }
+    else
+    {
+        /* Create server response  && send data in chuncks */
+        build_response(url, content_type, connection);
+    }
+
+    /* Free buffer after done */
+    free(buffer);
+}
 /**
  * @brief Builds the server response for an HTTP 1.1 request and sends the data in chunks.
  * @param url The requested URL.
@@ -350,21 +394,11 @@ static void get_content_type(char *url, char *content_type)
 /**
  * @brief Generates a Mandelbrot video with random center values.
  */
-static void generate_video(void)
+static void generate_video(float x, float y)
 {
 	// Generate random mandelbro image
 	char command[1000];
-	srand(time(NULL));
-	const float MIN = -1.0;
-	const float MAX = 1.0;
 	const char *READ = "r";
-
-	// Seed the random number generator
-	srand(time(NULL));
-
-	// Generate random floats
-	float x = ((float)rand() / RAND_MAX) * (MAX - MIN) + MIN;
-	float y = ((float)rand() / RAND_MAX) * (MAX - MIN) + MIN;
 
 	// Put into command field
 	snprintf(command, sizeof(command), "cd /home/kohlmanz/dev/mandelbrot-zachkohl1 && ./mandelmovie -c 10 -m 100 -x %f -y %f", x, y);

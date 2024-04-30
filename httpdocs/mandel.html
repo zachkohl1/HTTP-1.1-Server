@@ -1,84 +1,104 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Mandelbrot Video</title>
-  <style>
-    #video-container {
-      position: absolute;
-    }
-    video {
-      display: block;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mandelbrot Video</title>
+    <style>
+        #video-container {
+            position: absolute;
+        }
+        video {
+            display: block;
+        }
+    </style>
 </head>
 <body>
-  <h1>Mandelbrot Video</h1>
-  <div id="video-container">
-    <video width="400" height="300" controls autoplay loop muted>
-      <source src="./mandel.mp4" type="video/mp4">
-      Your browser does not support the video tag.
-  </video>
-  </div>
+    <h1>Mandelbrot Video</h1>
+    <div id="video-container">
+        <video width="400" height="300" controls autoplay loop muted>
+            <source src="./mandel.mp4" type="video/mp4">
+            Your browser does not support the video tag.
+        </video>
+    </div>
 
-  <script>
-    const videoContainer = document.getElementById('video-container');
-    const video = videoContainer.querySelector('video');
-    const containerWidth = window.innerWidth;
-    const containerHeight = window.innerHeight;
-    const bounceSound = new Audio('./bounce.mp3'); // Replace with your sound file path
+    <form id="mandelbrot-form">
+        <label for="x-coord">X Coordinate:</label>
+        <input type="number" id="x-coord" name="x" step="0.01" required>
 
-    const videoRect = video.getBoundingClientRect();
-    const videoWidth = videoRect.width;
-    const videoHeight = videoRect.height;
+        <label for="y-coord">Y Coordinate:</label>
+        <input type="number" id="y-coord" name="y" step="0.01" required>
 
-    let xVelocity = 3;
-    let yVelocity = 2;
+        <button type="submit">Generate Mandelbrot Video</button>
+    </form>
 
-    function playBounceSoundAndResetVideo() {
-      bounceSound.play();
-      video.currentTime = 0; // Reset the video playback time
-    }
+    <script>
+        const videoContainer = document.getElementById('video-container');
+        const video = videoContainer.querySelector('video');
+        const containerWidth = window.innerWidth;
+        const containerHeight = window.innerHeight;
+        const videoRect = video.getBoundingClientRect();
+        const videoWidth = videoRect.width;
+        const videoHeight = videoRect.height;
+        let xVelocity = 3;
+        let yVelocity = 2;
 
-    function moveVideo() {
-    let videoX = videoContainer.offsetLeft;
-    let videoY = videoContainer.offsetTop;
-    videoX += xVelocity;
-    videoY += yVelocity;
+        function moveVideo() {
+            let videoX = videoContainer.offsetLeft;
+            let videoY = videoContainer.offsetTop;
+            videoX += xVelocity;
+            videoY += yVelocity;
 
-    if (videoX <= 0 || videoX + videoWidth >= containerWidth) {
-        videoX = videoX <= 0 ? 0 : containerWidth - videoWidth;
-        xVelocity = -xVelocity;
-        restartAudio();
-    }
+            if (videoX <= 0 || videoX + videoWidth >= containerWidth) {
+                videoX = videoX <= 0 ? 0 : containerWidth - videoWidth;
+                xVelocity = -xVelocity;
+            }
 
-    if (videoY <= 0 || videoY + videoHeight >= containerHeight) {
-        videoY = videoY <= 0 ? 0 : containerHeight - videoHeight;
-        yVelocity = -yVelocity;
-        restartAudio();
-    }
+            if (videoY <= 0 || videoY + videoHeight >= containerHeight) {
+                videoY = videoY <= 0 ? 0 : containerHeight - videoHeight;
+                yVelocity = -yVelocity;
+            }
 
-    videoContainer.style.left = `${videoX}px`;
-    videoContainer.style.top = `${videoY}px`;
-    requestAnimationFrame(moveVideo);
-}
+            videoContainer.style.left = `${videoX}px`;
+            videoContainer.style.top = `${videoY}px`;
+            requestAnimationFrame(moveVideo);
+        }
 
-  function restartAudio() {
-    bounceSound.currentTime = 0; // Reset the audio playback position
-    bounceSound.play(); // Play the audio from the beginning
-  }
+        video.autoplay = true;
+        video.loop = true;
+        video.muted = true;
+        moveVideo();
 
-video.autoplay = true;
-video.loop = true;
-video.muted = true;
-moveVideo();
+        // Handle form submission
+        const mandelForm = document.getElementById('mandelbrot-form');
+        mandelForm.addEventListener('submit', (event) => {
+            event.preventDefault(); // Prevent the form from submitting normally
 
-    video.autoplay = true;
-    video.loop = true;
-    video.muted = true;
+            const formData = new FormData(mandelForm);
+            const x = formData.get('x');
+            const y = formData.get('y');
 
-    moveVideo();
-  </script>
+            // Make a POST request to your server with the x and y coordinates
+            fetch('/mandel', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: `x=${x}&y=${y}`,
+            })
+            .then(response => {
+                if (response.ok) {
+                    // Handle the successful response from the server
+                    console.log('Mandelbrot video generated successfully');
+                    // You can update the video source here or perform any other necessary actions
+                } else {
+                    console.error('Error generating Mandelbrot video');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+            });
+        });
+    </script>
 </body>
 </html>
